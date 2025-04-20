@@ -1,0 +1,78 @@
+version: '3.8'
+
+services:
+  # Backend service
+  backend:
+    build:
+      context: ./mixmaster_ai_backend
+      dockerfile: docker/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=production
+      - DB_TYPE=mongodb
+      - MONGODB_URI=${MONGODB_URI:-mongodb://mongodb:27017/mixmaster}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-your_secret_key_change_this_in_production}
+      - ACCESS_TOKEN_EXPIRE_MINUTES=1440
+      - STRIPE_API_KEY=${STRIPE_API_KEY}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
+      - STRIPE_MONTHLY_SUBSCRIPTION_PRICE_ID=${STRIPE_MONTHLY_SUBSCRIPTION_PRICE_ID}
+      - STRIPE_LIFETIME_ACCESS_PRICE_ID=${STRIPE_LIFETIME_ACCESS_PRICE_ID}
+      - ADMIN_EMAILS=${ADMIN_EMAILS}
+    volumes:
+      - ./data/uploads:/app/uploads
+      - ./data/results:/app/results
+    depends_on:
+      - mongodb
+    restart: unless-stopped
+
+  # Frontend service
+  frontend:
+    build:
+      context: ./mixmaster_ai_frontend
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+        - NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY}
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      - NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY}
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # MongoDB service
+  mongodb:
+    image: mongo:latest
+    ports:
+      - "27017:27017"
+    volumes:
+      - ./data/mongodb:/data/db
+    restart: unless-stopped
+
+  # Nginx service for production deployment
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf:/etc/nginx/conf.d
+      - ./nginx/certbot/conf:/etc/letsencrypt
+      - ./nginx/certbot/www:/var/www/certbot
+    depends_on:
+      - backend
+      - frontend
+    restart: unless-stopped
+
+  # Certbot service for SSL certificates
+  certbot:
+    image: certbot/certbot
+    volumes:
+      - ./nginx/certbot/conf:/etc/letsencrypt
+      - ./nginx/certbot/www:/var/www/certbot
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+    depends_on:
+      - nginx
